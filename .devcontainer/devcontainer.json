@@ -1,0 +1,20 @@
+{
+  "name": "lower_saxony_fisc",
+  "build": {
+    "dockerfile": "../Dockerfile"
+  },
+  //"workspaceFolder": "/workspace",
+  "context": "..", // optional: defines build context if devcontainer is in subfolder
+  "mounts": [
+    "source=${localWorkspaceFolder},target=/workspace,type=bind"
+  ],
+  "settings": {
+    "python.defaultInterpreterPath": "/usr/local/bin/python"
+  },
+  "extensions": [
+    "ms-python.python",
+    "ms-toolsai.jupyter"
+  ],
+  "postCreateCommand": "pip install -r requirements.txt",
+  "remoteUser": "root"
+}

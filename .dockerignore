@@ -1,0 +1,13 @@
+data/*
+reports/*
+
+# Optional: Keep empty data folder
+!data/.gitkeep 
+!reports/.gitkeep
+
+*.pkl
+*.dta
+__pycache__/
+*.pyc
+*.ipynb_checkpoints
+.env
