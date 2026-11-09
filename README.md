@@ -18,13 +18,36 @@ Organization of the code largely follows the Cookiecutter Data Science template 
 
 The script-containing parts are:
 - Programs in `src/data` are used to prepare and process data sets. 
-- Programs in `src/analysis` are used to analysed processed data.
-- Programs in `src/visualization` are used to visualize and to prepare the results. 
+- Programs in `src/analyses_results` are used to analysed processed data. 
+
+#### Processing the field data
+`src/data/dataprocessing_utils/gridregionjoin.py` joins the eea grid with the district boundaries of Niedersachsen.
+Output: data/interim/grid_landkreise.pkl - a GeoDataFrame with the grid cells that intersect with the landkreise boundaries. The geodataframe is called and used in the dataload script to assign district and grid cell to the field polygons.
+
+`src/data/dataprocessing_utils/dataload.py` is the primary data loading script that loads the raw data, drops unnecessary columns, removes areas outside of Niedersachsen boundaries, spatially joins all years with district information (Kreise) and the EEA reference 10km grid, and prepares data for further processing and analysis.
+Output: parquet files for each year – data/interim/gld_per_year
+
+After data loading, we use `src/data/dataprocessing_utils/eca_new.py` to refactor and harmonise land-use information across all years in the study data, producing a land-use master file - data/interim/kulturcode_mastermap.csv. This master file is applied in `src/data/processing_data_utils/field_dataset.py` to identify land-use group values across years in the full dataset.
+
+`src/data/dataprocessing_utils/field_dataset.py` is the final field-level processing script before aggregations to grid cells and districts. In addition to updating land-use information in the raw data using the created master map, the script filters out polygons from unproductive groups and excludes polygons with an area of less than 100 m².
+
+#### Deriving coarse-level field aggregates and computing change
+`src/data/coarseaggregates_andchange_utils/griddf_desc.py` contains code for obtaining grid-level field aggregates and computing change at this level while `src/data/coarseaggregates_andchange_utils/landkreis_desc.py` does the same for the district level.
+
+#### Processing the farm data
+`src/data/dataprocessing_utils/process_farmdata.py` loads farm data xml files, drops unneeded columns such as Klasse, tidies the district id, convert ha columns to km² and saves as csv
+Output: data/interim/farmdata.csv
+
+#### Answering RQs 1 and 2
+`src/analyses_results/RQ1_line_kde.py` provide the plot and values in the line plot and kde section of 3.1, `src/analyses_results/RQ1_spatial.py` provide Figure 5 and stats, and `src/analyses_results/RQ2_analysis_andplot.py` computes change infarm for 2016 and 2020, extracts needed field change and provides stats and figures for 3.2
+
+**Data checks**
+We use the scripts in `src/data/datachecks` to assess and understand the field data, e.g., checking differences between schlag and teil schlag, identifying non-productive polygon groups in the data, deriving the statistics provided in the methodology, and detecting examples of field structural change. `nonproductivecheck.py` and `stat_in_methodology.py` use the full dataset while others use only some parts of the data. Since these parts were identified manually, using these other scripts exactly as is may raise errors if the data is customised differently, but the scripts still give an idea of the checks we carried out.
+
 
 ### License for Code
 
 The code is licensed under a Apache License 2.0.
-
 
 
 ## Project Setup
@@ -36,14 +59,14 @@ Ensure devcontainer setup works for you.
 - **Packages:** Full list of packages to install and their versions are provided in the `requirements.txt` file.
 
 ### Data
-The links and download procedure for the field data are embedded in the data-loading workflow of script `src/data/processing_fielddata_utils/dataload.py`. To download the data outside of this replication workflow, copy out the data urls and use as preferred.
+The complete yearly data for all 13 years in the study are confidential and must be requested from the Lower Saxony Center for Rural Development and Agricultural Promotion (Servicezentrum Landentwicklung und Agrarförderung). However, the data for a current and previous year (e.g., current: 2026 and previous: 2025) are public accessible via https://sla.niedersachsen.de/mapbender_sla/application/Schlaginfo.
 
-This table provides information about the supplementary datasets used along with the field data for this study.
+
+This table provides information about the additional datasets used along with the field data for this study.
 | Data.Name  | Needed.Data.Files | Storage.Location | Publicly.Accessible | Link|
 | -- | -- | -- | -- |-- |
 | "State boundaries" | `NDS_Landesflaeche.shp`; `NDS_Landkreise.shp` | `.../verwaltungseinheiten/` | TRUE | [OpenGeoData](https://ni-lgln-opengeodata.hub.arcgis.com/documents/e9631a1bccac4823912963aa8f0bc0b0/about)|
 | "10km grid" |  `eea_10_km_eea-ref-grid-de_p_2013_v02_r00/de_10km.shp` |  `data/raw/` | TRUE | [EEA Datahub](https://www.eea.europa.eu/en/datahub/datahubitem-view/3c362237-daa4-45e2-8c16-aaadfb1a003b) |
-| "Elevation" |  `lsax_elevation.tif` |  `data/raw/` | TRUE | [Google Earth Engine](https://code.earthengine.google.com/dfce28651cb69cbbdfd1e71134294643) |
 | "Farm" |  `farmdata.zip` |  `data/raw/` | TRUE | [Regional database](https://www1.nls.niedersachsen.de/statistik/html/default.asp) |
 ---
 
@@ -63,20 +86,6 @@ You can save this downloaded zipped file anywhere you want. Just make sure the u
 5. On the page to which you are redirected, click `Download all files`
 You can save this downloaded zipped file anywhere you want. Just make sure the unzipped folder is saved in `data/raw`.
 
-***Elevation data***:
-To access Google Earth Engine, you need a Google account
- - Go to https://earthengine.google.com/platform/ and click Get Started
- - On the displayed configuration page, choose applicable use category. If non-commercial as in the case of this study, click Get Started under `See if you are eligible for non-commercial use`. This page will lead you to a registration page where you can provide work and organisation information. After completing the steps, you should be registered for non-commercial GEE use.
-
-Once the registration is completed:
-1. Click the GEE link in the data table above
-2. Click on Tasks in the top right panel
-3. Run `lsax_elevation`
-4. Change folder name to an existing Google Drive folder you can later access or create folder `elevation_fisc` in your Drive
-5. Click `Run`
-Download lsax_elevation.geo_tiff file from Google drive and place in `data/raw`
-
-
 ***Farm data***:
 1. Click on the farm data link
 2. Click `WEITER` -> `4 - Wirtschaftsbereiche, Verkehr` -> `41 - Land- und Forstwirtschaft, Fischerei` -> `41121 Agrarstrukturerhebung` -> `Landwirtschaftliche Betriebe mit LF nach Größenklasse der LF (2010,2016,2020)`
@@ -89,18 +98,14 @@ Download lsax_elevation.geo_tiff file from Google drive and place in `data/raw`
 
 ---
 ## Replication Workflow
-1. Run `src/data/datachecks/data_exploration.py` in chunks as sectioned with '# %%'.
-  This processes the data while utilizing the helper scripts in `src/data/processing_fielddata_utils` and `src/data/processing_griddata_utils`. It also allows exploring the data, e.g., obtaining the information provided in Appendix A, and verifying the descriptive values and shape figures provided in the methods section.
+1. Run `src/data/dataprocessing_utils/process_farmdata.py` to process farm data. This step should take only a couple seconds.
 
-  Due to the large data, it is possible that you will experience kernel crashes while running the code chunks e.g., after running the first three chunks (excluding project setup). If this happen, restart editor and continue from where you stopped except if of course you need the results from a previous step. Then start from the needed chunk.
+2. Run `src/data/datachecks/stats_in_methodology.py`. This will take several minutes but at completion, all the steps for processing field data and coarse-level aggregation would have been completed. Also, the statistics mentioned in methodology section would have been derived.
+Line **43* which does `allgld_no_geom = fd.process_nogeom_data(years=years, return_mode='all')` is a heavy step that processes field data. Thus, due to the large data, it is possible that you will experience kernel crashes while at this stage. If this happens, restart editor and start from the needed chunk.  The field data processing scripts contain programs that checks if a year has been processed thus preventing always rerunning the process for all years.
 
-2. Run `src/visualization/lineplots.py` to generate Figure 4 and 5
+3. Run `src/analyses_results` scripts to produce the results section
 
-3. Run `src/visualization/mapplots.py` to generate Figure 6 and descriptive statistics of the plotted maps
-
-4. Process farm data and merge to district data by running files in `src/data/processing_districtdata_utils` starting with landkreis_elev and then landkreis_fieldfarmchange.py`
-
-5. Run `src/analysis/district_farmfield_relationship.py` and then `src/analysis/district_farmcountchange.py`. These generate the maps and scatterplots in Figure 7 and 8, the kde in Figure B1, maps in Figure B2 and the correlation coefficients in Table B3.
+Use other files in `src/data/datachecks` as needed.
 
 ---
 
