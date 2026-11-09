@@ -26,7 +26,7 @@ data_main_path=open(project_root+"/datapath.txt").read()
 
 print("Current working dir:", project_root)
 
-from src.data.processing_fielddata_utils import gridregionjoin
+from src.data.dataprocessing_utils import gridregionjoin
 
 #this script loads the 2012 - 2024 niedersacsen data, filters with landesflaeche shapefile to remove areas outside of niedersacsen boundaries,
 #spatially joins all years with regional information (kreise) and eea reference 10km grid, and prepares it for analysis.

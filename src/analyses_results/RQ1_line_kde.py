@@ -1,6 +1,7 @@
 # %%
 import os
 import numpy as np
+import pandas as pd
 import seaborn as sns
 from pathlib import Path
 import matplotlib.pyplot as plt
@@ -22,20 +23,14 @@ os.makedirs("reports/figures", exist_ok=True)
 plt.rcParams["font.family"] = "sans-serif"
 plt.rcParams["font.sans-serif"] = ["Arial", "DejaVu Sans"]
 
-from src.data.processing_griddata_utils import griddf_desc as gd
-from src.data.processing_districtdata_utils import landkreis_desc as ld
+ #%%
+from src.data.coarseaggregates_andchange_utils import griddf_desc as gd
 
 # %%
 # Grid level
-griddf = gd.silence_prints(gd.create_fullgriddf, return_mode='without_small', ref_year=2016)
+griddf = gd.create_fullgriddf(return_mode='without_small')
 griddf_cl, outl = gd.clean_griddf(griddf)
 _, grid_yearly_cl = gd.silence_prints(gd.desc_grid, griddf_cl, ref_year=2016)
-
-# %%
-# Landkreis level
-landkreisdf = ld.silence_prints(ld.create_fulllandkreisdf, return_mode='without_small', ref_year=2016)
-landkreisdf_cl = ld.clean_landkreisdf(landkreisdf)
-_, landkreis_yearly_cl = ld.silence_prints(ld.desc_landkreis, landkreisdf_cl, ref_year=2016)
 
 ####################################################################
 # 1. we can make a single line plot for each metric using yearly_cl to
@@ -101,10 +96,45 @@ multiline_metrics(
     ylabel="Aggregate Change (%) in Field Metric Value from 2012",
     metrics=metrics,
     format='svg',
-    save_path="reports/figures/aggregate_line_trends_0826_with100m2.svg",
+    save_path="reports/figures/AggregateFiSC_trendlines.svg",
     color_mapping=color_mapping
 )
 
+# %% # obtain aggregate min and max
+grid_yearly_cl= grid_yearly_cl[grid_yearly_cl['year']>2012]
+print(grid_yearly_cl.loc[grid_yearly_cl['medareakm2_percdiffy1_med'].idxmax(), ["year", "medareakm2_percdiffy1_med"]])
+print(grid_yearly_cl.loc[grid_yearly_cl['medareakm2_percdiffy1_med'].idxmin(), ["year", "medareakm2_percdiffy1_med"]])
+
+print(grid_yearly_cl.loc[grid_yearly_cl['fields_perarea_percdiffy1_med'].idxmax(), ["year", "fields_perarea_percdiffy1_med"]])
+print(grid_yearly_cl.loc[grid_yearly_cl['fields_perarea_percdiffy1_med'].idxmin(), ["year", "fields_perarea_percdiffy1_med"]])
+
+print(grid_yearly_cl.loc[grid_yearly_cl['medshape_percdiffy1_med'].idxmax(), ["year", "medshape_percdiffy1_med"]])
+print(grid_yearly_cl.loc[grid_yearly_cl['medshape_percdiffy1_med'].idxmin(), ["year", "medshape_percdiffy1_med"]])
+
+
+# %%
+# Group by 'year' and calculate useful stds across grids
+grid_yearly_stds = griddf_cl.groupby('year').agg(
+    medareakm2_percdiffy1_std=('medareakm2_percdiff_to_y1', 'std'),
+    medshape_percdiffy1_std=('medshape_percdiff_to_y1', 'std'),
+    fields_perarea_percdiffy1_std=('fields_perarea_percdiff_to_y1', 'std')
+
+).reset_index()
+
+grid_yearly_stds = grid_yearly_stds[grid_yearly_stds['year'] != 2012]
+grid_yearly_stds['medareakm2_percdiffy1_var'] = grid_yearly_stds['medareakm2_percdiffy1_std']**2
+grid_yearly_stds['medshape_percdiffy1_var'] = grid_yearly_stds['medshape_percdiffy1_std']**2
+grid_yearly_stds['fields_perarea_percdiffy1_var'] = grid_yearly_stds['fields_perarea_percdiffy1_std']**2
+
+# Pooled Standard Deviation for each metric
+av_size_std = (sum(grid_yearly_stds['medareakm2_percdiffy1_var'])/12)**0.5
+print(av_size_std)
+
+av_fa_std = (sum(grid_yearly_stds['fields_perarea_percdiffy1_var'])/12)**0.5
+print(av_fa_std)
+
+av_shape_std = (sum(grid_yearly_stds['medshape_percdiffy1_var'])/12)**0.5
+print(av_shape_std)
 
 ################################################################################
 # 2. Plot the figures in paper:
@@ -179,10 +209,10 @@ plot_configs = [
 create_fisc_trend_plots(fig, axs, griddf_cl, grid_yearly_cl, plot_configs)
 
 plt.subplots_adjust(left=0.09, wspace=0.2, hspace=0.2, top=0.80)
-fig.text(0.05, 0.45, 'Percentage Change from Base Year (2012)', va='center', ha='center', rotation='vertical', fontdict={'fontsize': 12}) #, transform=fig.transFigure
+fig.text(0.05, 0.45, 'Percentage Change from Baseline (2012)', va='center', ha='center', rotation='vertical', fontdict={'fontsize': 12}) #, transform=fig.transFigure
 
 #save plot as svg
-plt.savefig("reports/figures/revision/FiSC_trendlines.jpeg", format="jpeg", bbox_inches='tight')
+plt.savefig("reports/figures/FiSC_trendlines.jpeg", format="jpeg", bbox_inches='tight')
 
 plt.show()
 
@@ -196,7 +226,7 @@ label_mapping = {
     'fields_perarea_percdiff_to_y1': 'Δ FD (%)',
     'medshape_percdiff_to_y1': 'Δ MedSHAPE (%)',
 }
-
+sns.set_style("white")   # no grid at all
 # Variables and years
 variables = ['medareakm2_percdiff_to_y1', 'fields_perarea_percdiff_to_y1', 'medshape_percdiff_to_y1']
 years = [2016, 2020, 2024]
@@ -258,4 +288,27 @@ plt.tight_layout()
 plt.savefig('reports/figures/Fisckde_hist_3x3_rotatedwithoutlier.svg', dpi=300, bbox_inches='tight')
 plt.show()
 
+# %% count of positive vs negative changes
+years = [2016, 2020, 2024]
+cols = ['medareakm2_percdiff_to_y1', 'fields_perarea_percdiff_to_y1', 'medshape_percdiff_to_y1']  
+sub = griddf_cl[griddf_cl['year'].isin(years)]
 
+rows = {}
+for col in cols:
+    for year, g in sub.groupby('year'):
+        n_cells = g['CELLCODE'].nunique()   # all cells in that year
+        pct = lambda mask: 100 * g.loc[mask, 'CELLCODE'].nunique() / n_cells
+        rows[(col, year)] = {
+            'positive_%': pct(g[col] > 0),
+            'negative_%': pct(g[col] < 0),
+            'zero_%': pct(g[col] == 0),
+            'missing_%': pct(g[col].isna()),
+        }
+
+result = pd.DataFrame(rows).T.round(1)
+result.index.names = ['column', 'year']
+print(result)
+
+
+
+# %%

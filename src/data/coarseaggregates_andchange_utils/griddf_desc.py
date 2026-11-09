@@ -21,41 +21,46 @@ for parent in [current_path] + list(current_path.parents):
 project_root=os.getcwd()
 data_main_path=open(project_root+"/datapath.txt").read()
 
-from src.data.processing_fielddata_utils import field_dataset as fd
+from src.data.dataprocessing_utils import field_dataset as fd
 
-# %% B. Creating landkreisdf (LANDKREIS-level aggregation, parallel to griddf/CELLCODE version)
-def create_landkreisdf_base(gld):
+''' This script contains functions for:
+    - modifying gld to contain kulturcode descriptions.
+    - creating griddf and clean griddf (having removed assumed outliers).
+    - computing descriptive statistics for griddf.
+'''
+
+# %% B. Creating griddf
+def create_griddf_base(gld):
     """
-    Create a landkreisdf DataFrame with aggregated statistics that summarize field data,
-    aggregated by LANDKREIS instead of CELLCODE.
+    Create a griddf dataFrame with aggregated statistics that summarize field data.
 
     Parameters:
-    gld (DataFrame): Input DataFrame with columns ['year', 'LANDKREIS']
+    gld (dataFrame): Input dataFrame with columns ['CELLCODE', 'year', 'LANDKREIS'] 
                         and additional numeric columns for aggregation.
 
     Returns:
-    A DataFrame with unique LANDKREIS, year rows,
+    A  DataFrame with unique CELLCODE, year, and LANDKREIS rows,
                   enriched with aggregated fields.
     """
-
-    required_columns = ['year', 'LANDKREIS', 'row_id',
-                         'Gruppe', 'area_km2', 'peri_km', 'shape']
+    
+    required_columns = ['CELLCODE', 'year', 'LANDKREIS', 'row_id',\
+        'Gruppe', 'area_km2', 'peri_km', 'shape']
     missing = [col for col in required_columns if col not in gld.columns]
     if missing:
         raise ValueError(f"Input DataFrame is missing required columns: {missing}")
-
-    # Step 1: Create base landkreisdf
-    columns = ['year', 'LANDKREIS']
-    landkreisdf = gld[columns].drop_duplicates().copy()
-    logging.info(f"Created landkreisdf with shape {landkreisdf.shape}")
-    logging.info(f"Columns in landkreisdf: {landkreisdf.columns}")
+    
+    # Step 1: Create base griddf
+    columns = ['CELLCODE', 'year', 'LANDKREIS']
+    griddf = gld[columns].drop_duplicates().copy()
+    logging.info(f"Created griddf with shape {griddf.shape}")
+    logging.info(f"Columns in griddf: {griddf.columns}")
 
     # Helper function for aggregation
-    def add_aggregated_column(landkreisdf, gld, column, aggfunc, new_col):
+    def add_aggregated_column(griddf, gld, column, aggfunc, new_col):
         logging.info(f"Adding column '{new_col}' using '{aggfunc}' on '{column}'.")
-        temp = gld.groupby(['LANDKREIS', 'year'])[column].agg(aggfunc).reset_index()
-        temp.columns = ['LANDKREIS', 'year', new_col]
-        return pd.merge(landkreisdf, temp, on=['LANDKREIS', 'year'], how='left')
+        temp = gld.groupby(['CELLCODE', 'year'])[column].agg(aggfunc).reset_index()
+        temp.columns = ['CELLCODE', 'year', new_col]
+        return pd.merge(griddf, temp, on=['CELLCODE', 'year'], how='left')
 
     # Define aggregations
     aggregations = [
@@ -74,77 +79,86 @@ def create_landkreisdf_base(gld):
 
     # Apply each aggregation
     for agg in aggregations:
-        landkreisdf = add_aggregated_column(landkreisdf, gld, agg['column'], agg['aggfunc'], agg['new_col'])
+        griddf = add_aggregated_column(griddf, gld, agg['column'], agg['aggfunc'], agg['new_col'])
 
-    # Rate of fields per area of land per LANDKREIS
-    landkreisdf['fields_perarea'] = (landkreisdf['fields'] / landkreisdf['areakm2_sum'])
+    # Rate of fields per hectare of land per grid
+    griddf['fields_perarea'] = (griddf['fields'] / griddf['areakm2_sum'])
 
-    return landkreisdf
+    return griddf
 
 
-# check for duplicates in the landkreisdf
-def check_duplicates_landkreis(landkreisdf):
-    duplicates = landkreisdf[landkreisdf.duplicated(subset=['LANDKREIS', 'year'], keep=False)]
-    print(f"Number of duplicates in landkreisdf: {duplicates.shape[0]}")
+# check for duplicates in the griddf
+def check_duplicates(griddf):
+    duplicates = griddf[griddf.duplicated(subset=['CELLCODE', 'year'], keep=False)]
+    print(f"Number of duplicates in griddf: {duplicates.shape[0]}")
     if duplicates.shape[0] > 0:
         print(duplicates)
     else:
         print("No duplicates found")
+            
+#yearly gridcell differences and differences from first year
+def calculate_yearlydiff(griddf): #yearly gridcell differences
+    # Create a copy of the original dictionary to avoid altering the original data
+    griddf_ext = griddf.copy()
+    
+    # Ensure the data is sorted by 'CELLCODE' and 'year'
+    griddf_ext.sort_values(by=['CELLCODE', 'year'], inplace=True)
+    numeric_columns = griddf_ext.select_dtypes(include='number').columns
 
-
-# yearly LANDKREIS differences and differences from first year
-def calculate_yearlydiff_landkreis(landkreisdf):  # yearly LANDKREIS differences
-    landkreisdf_ext = landkreisdf.copy()
-
-    # Ensure the data is sorted by 'LANDKREIS' and 'year'
-    landkreisdf_ext.sort_values(by=['LANDKREIS', 'year'], inplace=True)
-    numeric_columns = landkreisdf_ext.select_dtypes(include='number').columns
-
+    # Create a dictionary to store the new columns
     new_columns = {}
 
+    # Calculate yearly difference for numeric columns and store in the dictionary
     for col in numeric_columns:
-        new_columns[f'{col}_yearly_diff'] = landkreisdf_ext.groupby('LANDKREIS')[col].diff().fillna(0)
-        new_columns[f'{col}_yearly_percdiff'] = (
-            landkreisdf_ext.groupby('LANDKREIS')[col].diff() /
-            landkreisdf_ext.groupby('LANDKREIS')[col].shift(1)
-        ).fillna(0) * 100
-
+        new_columns[f'{col}_yearly_diff'] = griddf_ext.groupby('CELLCODE')[col].diff().fillna(0)
+    # Calculate yearly relative difference for numeric columns and store in the dictionary
+        new_columns[f'{col}_yearly_percdiff'] = (griddf_ext.groupby('CELLCODE')[col].diff() / griddf_ext.groupby('CELLCODE')[col].shift(1)).fillna(0) * 100
+    
+    # Concatenate the new columns to the original DataFrame all at once
     new_columns_df = pd.DataFrame(new_columns)
-    landkreisdf_ext = pd.concat([landkreisdf_ext, new_columns_df], axis=1)
+    griddf_ext = pd.concat([griddf_ext, new_columns_df], axis=1)
 
-    return landkreisdf_ext
+    return griddf_ext    
 
 
-def calculate_diff_fromy1_landkreis(landkreisdf):  # yearly differences from first year
-    landkreisdf_ext = landkreisdf.copy()
+# %%
+def calculate_diff_fromy1(griddf): #yearly differences from first year
+    # Create a copy of the original dictionary to avoid altering the original data
+    griddf_ext = griddf.copy()
 
-    landkreisdf_ext.sort_values(by=['LANDKREIS', 'year'], inplace=True)
-    numeric_columns = landkreisdf_ext.select_dtypes(include='number').columns
+    # Ensure the data is sorted by 'CELLCODE' and 'year'
+    griddf_ext.sort_values(by=['CELLCODE', 'year'], inplace=True)
+    numeric_columns = griddf_ext.select_dtypes(include='number').columns
 
+    # Create a dictionary to store the new columns
     new_columns = {}
 
-    # Get the first occurrence of each unique LANDKREIS
-    y1_df = landkreisdf_ext.groupby('LANDKREIS').first().reset_index()
-
-    y1_df = y1_df[['LANDKREIS'] + list(numeric_columns)]
+    # Get the first occurrence of each unique CELLCODE in the griddf_ext DataFrame. 
+    y1_df = griddf_ext.groupby('CELLCODE').first().reset_index()
+    
+    # Rename the numeric columns to indicate the first year
+    y1_df = y1_df[['CELLCODE'] + list(numeric_columns)]
     y1_df = y1_df.rename(columns={col: f'{col}_y1' for col in numeric_columns})
 
-    landkreisdf_ext = pd.merge(landkreisdf_ext, y1_df, on='LANDKREIS', how='left')
+    # Merge the first year values back into the original DataFrame
+    griddf_ext = pd.merge(griddf_ext, y1_df, on='CELLCODE', how='left')
 
+    # Calculate the difference from the first year for each numeric column (excluding yearly differences)
     for col in numeric_columns:
-        new_columns[f'{col}_diff_from_y1'] = landkreisdf_ext[col] - landkreisdf_ext[f'{col}_y1']
-        new_columns[f'{col}_percdiff_to_y1'] = (
-            (landkreisdf_ext[col] - landkreisdf_ext[f'{col}_y1']) / landkreisdf_ext[f'{col}_y1']
-        ) * 100
+        new_columns[f'{col}_diff_from_y1'] = griddf_ext[col] - griddf_ext[f'{col}_y1']
+        new_columns[f'{col}_percdiff_to_y1'] = ((griddf_ext[col] - griddf_ext[f'{col}_y1']) / griddf_ext[f'{col}_y1'])*100
 
-    landkreisdf_ext.drop(columns=[f'{col}_y1' for col in numeric_columns], inplace=True)
+    # Drop the temporary first year columns
+    griddf_ext.drop(columns=[f'{col}_y1' for col in numeric_columns], inplace=True)
 
+    # Concatenate the new columns to the original DataFrame all at once
     new_columns_df = pd.DataFrame(new_columns)
-    landkreisdf_exty1 = pd.concat([landkreisdf_ext, new_columns_df], axis=1)
+    griddf_exty1 = pd.concat([griddf_ext, new_columns_df], axis=1)
 
-    return landkreisdf_exty1
+    return griddf_exty1
 
-def calculate_diff_fromyear(df, group_col='LANDKREIS', ref_year=2016):
+# %%
+def calculate_diff_fromyear(df, group_col='CELLCODE', ref_year=2016):
     """
     Calculate difference and percent difference from a specified reference year,
     for each group (CELLCODE or LANDKREIS).
@@ -176,124 +190,163 @@ def calculate_diff_fromyear(df, group_col='LANDKREIS', ref_year=2016):
 
     return df_ext
 
-
-def combine_landkreisdfs(landkreisdf_ext, landkreisdf_exty1, landkreisdf_extyref=None):
-    columns_to_add = [col for col in landkreisdf_exty1.columns
-                       if col not in landkreisdf_ext.columns or col in ['LANDKREIS', 'year']]
-    combined_landkreisdf = pd.merge(
-        landkreisdf_ext, landkreisdf_exty1[columns_to_add],
-        on=['LANDKREIS', 'year'], how='left'
-    )
+# %% 
+def combine_griddfs(griddf_ext, griddf_exty1, griddf_extyref=None):
+    # Ensure the merge is based on 'CELLCODE' and 'year'
+    columns_to_add = [col for col in griddf_exty1.columns if col not in griddf_ext.columns or col in ['CELLCODE', 'year']]
+    combined_griddf = pd.merge(griddf_ext, griddf_exty1[columns_to_add], on=['CELLCODE', 'year'], how='left')
  
-    if landkreisdf_extyref is not None:
-        columns_to_add_ref = [col for col in landkreisdf_extyref.columns
-                               if col not in combined_landkreisdf.columns or col in ['LANDKREIS', 'year']]
-        combined_landkreisdf = pd.merge(
-            combined_landkreisdf, landkreisdf_extyref[columns_to_add_ref],
-            on=['LANDKREIS', 'year'], how='left'
-        )
+    if griddf_extyref is not None:
+        columns_to_add_ref = [col for col in griddf_extyref.columns if col not in combined_griddf.columns or col in ['CELLCODE', 'year']]
+        combined_griddf = pd.merge(combined_griddf, griddf_extyref[columns_to_add_ref], on=['CELLCODE', 'year'], how='left')
  
-    return combined_landkreisdf
+    return combined_griddf
 
-def to_gdf(landkreisdf_ext):
-    # Load Germany Landkreise boundaries (shapefile)
-    landkreis_geoms = gpd.read_file(data_main_path + '/raw/verwaltungseinheiten/NDS_Landkreise.shp')
-    landkreis_geoms.info()
 
-    # Merge on LANDKREIS (shapefile is Landkreis-level, not CELLCODE-level)
-    landkreisgdf = landkreisdf_ext.merge(landkreis_geoms, on='LANDKREIS')
+# %%
+def to_gdf(griddf_ext):
+    # Load Germany grid_landkreise to obtain the geometry
+    with open(data_main_path+'/interim/grid_landkreise.pkl', 'rb') as f:
+        grid_geoms = pickle.load(f)
+    grid_geoms.info()
+    
+    gridgdf = griddf_ext.merge(grid_geoms, on='CELLCODE')
     # Convert the DataFrame to a GeoDataFrame
-    landkreisgdf = gpd.GeoDataFrame(landkreisgdf, geometry='geometry')
+    gridgdf = gpd.GeoDataFrame(gridgdf, geometry='geometry')
+    # Dropping the 'LANDKREIS_y' column and rename LANDKREIS_x
+    gridgdf.drop(columns=['LANDKREIS_y'], inplace=True)
+    gridgdf.rename(columns={'LANDKREIS_x': 'LANDKREIS'}, inplace=True)
 
-    return landkreis_geoms, landkreisgdf
+    
+    return grid_geoms, gridgdf
 
-def create_fulllandkreisdf(return_mode='without_small', ref_year=2016):
-    output_dir = data_main_path + '/interim/landkreisdf'
+# %%
+def create_fullgriddf(return_mode='without_small', gld_no_geom=None, ref_year=2016):
+    output_dir = data_main_path+'/interim/gridgdf'
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
  
-    landkreisdf_filename = os.path.join(output_dir, f'landkreisdf_{return_mode}_ref{ref_year}.parquet')
+    # Filename depends on return_mode and ref_year, so each version is cached separately
+    griddf_filename = os.path.join(output_dir, f'griddf_{return_mode}_ref{ref_year}.parquet')
  
-    if os.path.exists(landkreisdf_filename):
-        landkreisdf = pd.read_parquet(landkreisdf_filename)
-        print(f"Loaded landkreisdf from {landkreisdf_filename}")
+    if os.path.exists(griddf_filename):
+        griddf = pd.read_parquet(griddf_filename)
+        print(f"Loaded griddf from {griddf_filename}")
     else:
-        if "gld_no_geom" in globals():
-            print("Using preloaded gld_no_geom")
-            gld_no_geom = globals()["gld_no_geom"]
-        else:
+        if gld_no_geom is None:
             print("Loading gld_no_geom with process_nogeom_data()")
             gld_no_geom = fd.process_nogeom_data(return_mode=return_mode)
+        else:
+            print("Using provided gld_no_geom")
  
-        landkreisdf_allyears = {}
+        # create a griddf_base for each year
+        griddf_allyears = {}
         for key, gld in gld_no_geom.items():
-            landkreisdf_yearly = create_landkreisdf_base(gld)
-            check_duplicates_landkreis(landkreisdf_yearly)
-            landkreisdf_allyears[key] = landkreisdf_yearly
+            griddf_yearly = create_griddf_base(gld)
+            check_duplicates(griddf_yearly)
+            griddf_allyears[key] = griddf_yearly
  
-        landkreisdf_base = pd.concat(landkreisdf_allyears.values(), ignore_index=True)
+        # put all years' griddfs into one dataframe
+        griddf_base = pd.concat(griddf_allyears.values(), ignore_index=True)
  
-        landkreisdf_ydiff = calculate_yearlydiff_landkreis(landkreisdf_base)
-        landkreisdf_exty1 = calculate_diff_fromy1_landkreis(landkreisdf_base)
-        landkreisdf_extyref = calculate_diff_fromyear(landkreisdf_base, group_col='LANDKREIS', ref_year=ref_year)
-        landkreisdf_ext = combine_landkreisdfs(landkreisdf_ydiff, landkreisdf_exty1, landkreisdf_extyref)
+        # calculate differences
+        griddf_ydiff = calculate_yearlydiff(griddf_base)
+        griddf_exty1 = calculate_diff_fromy1(griddf_base)
+        griddf_extyref = calculate_diff_fromyear(griddf_base, group_col='CELLCODE', ref_year=ref_year)
+        griddf_ext = combine_griddfs(griddf_ydiff, griddf_exty1, griddf_extyref)
  
-        for column in landkreisdf_ext.columns:
-            infinite_values = landkreisdf_ext[column].isin([np.inf, -np.inf])
+        # Check for infinite values in all columns
+        for column in griddf_ext.columns:
+            infinite_values = griddf_ext[column].isin([np.inf, -np.inf])
             print(f"Infinite values present in {column}:", infinite_values.any())
  
             if infinite_values.any():
                 print(f"Rows with infinite values in {column}:")
-                print(landkreisdf_ext[infinite_values])
+                print(griddf_ext[infinite_values])
  
-            landkreisdf_ext[column].replace([np.inf, -np.inf], np.nan, inplace=True)
+            griddf_ext[column].replace([np.inf, -np.inf], np.nan, inplace=True)
  
-        landkreisdf = landkreisdf_ext
-        landkreisdf.to_parquet(landkreisdf_filename)
-        print(f"Saved landkreisdf to {landkreisdf_filename}")
+        griddf = griddf_ext
+        griddf.to_parquet(griddf_filename)
+        print(f"Saved griddf to {griddf_filename}")
  
-        del gld_no_geom, landkreisdf_allyears, landkreisdf_base, landkreisdf_ydiff, landkreisdf_exty1, landkreisdf_extyref, landkreisdf_ext
+        del gld_no_geom, griddf_allyears, griddf_base, griddf_ydiff, griddf_exty1, griddf_extyref, griddf_ext
         gc.collect()
  
-    return landkreisdf
+    return griddf
 
 
-# %% drop landkreisdf outliers
-def clean_landkreisdf(landkreisdf):
-    # (kept analogous to the CELLCODE version's manual coastal/edge exclusions)
-    landkreisdf_cl = landkreisdf[~landkreisdf['LANDKREIS'].isin(
-        ["Küstenmeer Region Lüneburg", "Küstenmeer Region Weser-Ems"]
-    )]
+# %% drop griddf outliers i.e., grids which have  fields < 300
+# but only if all fields < 300 for all years in which the grid is in the dataset
+def clean_griddf(griddf):
+    # Remove grids with fields < 300
+    griddf_clean = griddf[~(griddf['fields'] < 300)]
+    outliers = griddf[griddf['fields'] < 300]
+    # Log the count of unique values of 'CELLCODE' in the outliers
+    logging.info(f"Unique CELLCODES with fields < 300: {outliers['CELLCODE'].nunique()}")
 
-    logging.info(f"Final cleaned landkreisdf shape: {landkreisdf_cl.shape}")
+    # Step 2: Create a DataFrame for unique CELLCODES
+    # and total count of years for unique CELLOCODES in griddf and outliers
+    griddf_unique = griddf.groupby('CELLCODE').agg(total_occurrence=('year', 'count')).reset_index()
+    outliers_unique = outliers.groupby('CELLCODE').agg(total_occurrence=('year', 'count')).reset_index()
 
-    return landkreisdf_cl
+    # Step 3: Add a column to check if occurrences match
+    merged_outliers = outliers_unique.merge(
+        griddf_unique, 
+        on='CELLCODE', 
+        suffixes=('_outliers', '_griddf'),
+        how='left'
+    )
+    merged_outliers['all_years_in_data'] = merged_outliers['total_occurrence_outliers'] == merged_outliers['total_occurrence_griddf']
 
+    # Step 4: Filter out rows where 'all_years_in_data' is no
+    unmatched_outliers = merged_outliers[merged_outliers['all_years_in_data'] == False]
+
+    # Step 5: Filter original outliers DataFrame for unmatched CELLCODES
+    unmatched_outlier_codes = unmatched_outliers['CELLCODE']
+    unmatched_outliers_df = outliers[outliers['CELLCODE'].isin(unmatched_outlier_codes)]
+
+    # Step 6: Join these rows to griddf_clean
+    final_cleaned_griddf = pd.concat([griddf_clean, unmatched_outliers_df], ignore_index=True)
+    
+    # Step 7: Create a final outliers DataFrame without the unmatched CELLCODES
+    final_outliers = outliers[~(outliers['CELLCODE'].isin(unmatched_outlier_codes))]
+    
+    # Step 8: Drop rows with specific CELLCODEs and LANDKREIS
+    # drop griddf_cl rows where ['CELLCODE'].isin(['10kmE431N333', '10kmE431N334'])
+    griddf_cl = final_cleaned_griddf.copy()
+    griddf_cl = griddf_cl[~griddf_cl['CELLCODE'].isin(['10kmE431N333', '10kmE431N334', '10kmE435N317', '10kmE436N317'])]
+    
+    # drop griddf_cl rows where ['LANDKREIS'].isin(['Küstenmeer Region Lüneburg', 'Küstenmeer Region Weser-Ems'])
+    griddf_cl = griddf_cl[~griddf_cl['LANDKREIS'].isin(["Küstenmeer Region Lüneburg", "Küstenmeer Region Weser-Ems"])]
+    
+    logging.info(f"Final cleaned griddf shape: {griddf_cl.shape}")
+   
+
+    return griddf_cl, final_outliers
 
 # %% B.
 #########################################################################
-# compute mean and median for columns in landkreisdf. save the results to a csv file
-def desc_landkreis(landkreisdf, ref_year=2016):
-    def compute_landkreis_allyear_stats(landkreisdf):
-        landkreis_allyears_stats = landkreisdf.select_dtypes(include='number').describe()
-        landkreis_allyears_stats['statistic'] = landkreis_allyears_stats.index
-        landkreis_allyears_stats = landkreis_allyears_stats[
-            ['statistic'] + list(landkreis_allyears_stats.columns[:-1])
-        ]
+# compute mean and median for columns in griddf. save the results to a csv file
+def desc_grid(griddf, ref_year=2016):
+    def compute_grid_allyear_stats(griddf):
+        grid_allyears_stats = griddf.select_dtypes(include='number').describe()
+        grid_allyears_stats['statistic'] = grid_allyears_stats.index
+        grid_allyears_stats = grid_allyears_stats[['statistic'] + list(grid_allyears_stats.columns[:-1])]
  
         output_dir = 'reports/statistics'
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
-        filename = os.path.join(output_dir, 'landkreis_allyears_stats.csv')
+        filename = os.path.join(output_dir, 'grid_allyears_stats.csv')
         if not os.path.exists(filename):
-            landkreis_allyears_stats.to_csv(filename, index=False)
+            grid_allyears_stats.to_csv(filename, index=False)
             print(f"Saved gen_stats to {filename}")
  
-        return landkreis_allyears_stats
-    landkreis_allyears_stats = compute_landkreis_allyear_stats(landkreisdf)
+        return grid_allyears_stats
+    grid_allyears_stats = compute_grid_allyear_stats(griddf)
  
-    def compute_landkreis_year_average(landkreisdf, ref_year):
-        landkreis_yearly_stats = landkreisdf.groupby('year').agg(
+    def compute_grid_year_average(griddf, ref_year):
+        grid_yearly_stats = griddf.groupby('year').agg(
             fields_sum=('fields', 'sum'),
             fields_mean=('fields', 'mean'),
             fields_std=('fields', 'std'),
@@ -393,11 +446,10 @@ def desc_landkreis(landkreisdf, ref_year=2016):
  
         ).reset_index()
  
-        return landkreis_yearly_stats
-    landkreis_yearly_stats = compute_landkreis_year_average(landkreisdf, ref_year)
+        return grid_yearly_stats
+    grid_yearly_stats = compute_grid_year_average(griddf, ref_year)
  
-    return landkreis_allyears_stats, landkreis_yearly_stats
- 
+    return grid_allyears_stats, grid_yearly_stats
 
 # Silence the print statements in a function call
 def silence_prints(func, *args, **kwargs):

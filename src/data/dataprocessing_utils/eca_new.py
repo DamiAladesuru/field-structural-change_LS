@@ -20,7 +20,7 @@ for parent in [current_path] + list(current_path.parents):
 project_root = os.getcwd()
 data_main_path = open(project_root + "/datapath.txt").read()
 
-from src.data.processing_fielddata_utils import dataload as dl
+from src.data.dataprocessing_utils import dataload as dl
 
 #  Required directories:
 os.makedirs("reports/Kulturcode", exist_ok=True)
